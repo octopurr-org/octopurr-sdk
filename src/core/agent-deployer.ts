@@ -13,12 +13,14 @@ import {
   type Address,
   parseEventLogs,
   encodeAbiParameters,
+  decodeAbiParameters,
+  isAddress,
   type Log,
 } from 'viem';
 import { AgentboundTokenDeployer_abi } from '../abi/AgentboundTokenDeployer.js';
 import { IdentityRegistry_abi } from '../abi/IdentityRegistry.js';
 import { TokenLauncher_abi } from '../abi/TokenLauncher.js';
-import { getChainConfig, type SupportedChainId, POOL_CONFIG } from '../config/index.js';
+import { getChainConfig, type SupportedChainId, type ChainConfig, POOL_CONFIG } from '../config/index.js';
 import { getIdentityRegistryAddress } from '../config/erc8004.js';
 import { parseError } from '../utils/errors.js';
 import { marketCapToTick, getDefaultTickRange } from '../utils/market-cap.js';
@@ -356,12 +358,36 @@ export async function deployAgentboundToken(
     crypto.getRandomValues(randomBytes);
     const salt = `0x${Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('')}` as `0x${string}`;
 
+    // Validate nftRecipient: reject known burn addresses to prevent permanent NFT loss.
+    // address(0) is safe — contract interprets it as msg.sender.
+    const BURN_ADDRESSES = [
+      '0x000000000000000000000000000000000000dead',
+      '0x0000000000000000000000000000000000000001',
+      '0x0000000000000000000000000000000000000002',
+      '0x0000000000000000000000000000000000000003',
+    ];
+    if (params.nftRecipient && BURN_ADDRESSES.includes(params.nftRecipient.toLowerCase())) {
+      throw new Error(`nftRecipient cannot be a burn address (${params.nftRecipient}) — agent NFT would be permanently lost`);
+    }
+    const nftRecipientAddr = params.nftRecipient ?? '0x0000000000000000000000000000000000000000' as `0x${string}`;
+
+    // Detect VestingVault agent mode extension — must use 9-arg overload so
+    // the contract can inject the real agentId (unknown until registration).
+    // Without this, agent-mode vaults would store agentId=0 → locked forever.
+    const vaultInfo = extractAgentVaultExtension(deployConfig, cfg);
+
+    // Build contract call args based on whether we need 5-arg or 9-arg overload
+    const args = vaultInfo
+      ? [agentURI, vaultInfo.configWithoutVault, salt, params.agentBps, nftRecipientAddr,
+         cfg.octopurr.vestingVault, vaultInfo.vaultBps, vaultInfo.lockupDuration, vaultInfo.vestingDuration] as const
+      : [agentURI, deployConfig, salt, params.agentBps, nftRecipientAddr] as const;
+
     // Simulate first
     await publicClient.simulateContract({
       address: agentDeployerAddr,
       abi: AgentboundTokenDeployer_abi,
       functionName: 'deployAgentboundToken',
-      args: [agentURI, deployConfig, salt, params.agentBps, params.nftRecipient ?? '0x0000000000000000000000000000000000000000'],
+      args,
       value: totalMsgValue,
       account,
     });
@@ -371,7 +397,7 @@ export async function deployAgentboundToken(
       address: agentDeployerAddr,
       abi: AgentboundTokenDeployer_abi,
       functionName: 'deployAgentboundToken',
-      args: [agentURI, deployConfig, salt, params.agentBps, params.nftRecipient ?? '0x0000000000000000000000000000000000000000'],
+      args,
       value: totalMsgValue,
       account,
     });
@@ -381,7 +407,7 @@ export async function deployAgentboundToken(
       address: agentDeployerAddr,
       abi: AgentboundTokenDeployer_abi,
       functionName: 'deployAgentboundToken',
-      args: [agentURI, deployConfig, salt, params.agentBps, params.nftRecipient ?? '0x0000000000000000000000000000000000000000'],
+      args,
       value: totalMsgValue,
       gas: (gasEstimate * 130n) / 100n, // 30% buffer (higher than normal due to batch complexity)
       account: walletClient.account,
@@ -406,6 +432,77 @@ export async function deployAgentboundToken(
 }
 
 /**
+ * Detect and extract a VestingVault agent-mode extension from the deploy config.
+ *
+ * The AgentboundTokenDeployer contract has a 9-arg overload that injects the real
+ * agentId into the vault config on-chain (since agentId is unknown until ERC-8004
+ * registration happens inside the contract). If the SDK passes an agent-mode vault
+ * via the 5-arg overload, the vault would store agentId=0 → permanently locked.
+ *
+ * This function:
+ * 1. Finds a VestingVault extension with isAgentMode=true in extensionConfigs
+ * 2. Extracts lockupDuration, vestingDuration, bps
+ * 3. Returns a new config WITHOUT the vault extension (contract will re-append it)
+ */
+function extractAgentVaultExtension(
+  deployConfig: ReturnType<typeof buildDeployConfigForAgent>,
+  cfg: ChainConfig,
+): {
+  configWithoutVault: typeof deployConfig;
+  vaultBps: number;
+  lockupDuration: bigint;
+  vestingDuration: bigint;
+} | null {
+  const vaultAddr = cfg.octopurr.vestingVault?.toLowerCase();
+  if (!vaultAddr) return null;
+
+  const extensions = deployConfig.extensionConfigs as readonly {
+    extension: `0x${string}`;
+    bps: number;
+    msgValue: bigint;
+    data: `0x${string}`;
+  }[];
+
+  const vaultIdx = extensions.findIndex(
+    (e) => e.extension.toLowerCase() === vaultAddr,
+  );
+  if (vaultIdx === -1) return null;
+
+  const vaultExt = extensions[vaultIdx];
+
+  // Decode VaultExtensionData: (uint256, uint256, address, bool, uint256)
+  try {
+    const decoded = decodeAbiParameters(
+      [
+        { type: 'uint256' }, // lockupDuration
+        { type: 'uint256' }, // vestingDuration
+        { type: 'address' }, // admin
+        { type: 'bool' },    // isAgentMode
+        { type: 'uint256' }, // agentId
+      ],
+      vaultExt.data,
+    );
+
+    const isAgentMode = decoded[3];
+    if (!isAgentMode) return null; // direct mode — keep as-is, 5-arg is fine
+
+    // Agent mode: extract and remove from extensions
+    const filteredExtensions = [...extensions.slice(0, vaultIdx), ...extensions.slice(vaultIdx + 1)];
+    return {
+      configWithoutVault: {
+        ...deployConfig,
+        extensionConfigs: filteredExtensions,
+      },
+      vaultBps: vaultExt.bps,
+      lockupDuration: decoded[0],
+      vestingDuration: decoded[1],
+    };
+  } catch {
+    return null; // cannot decode — leave as-is
+  }
+}
+
+/**
  * Build the DeploymentConfig struct for the AgentDeployer contract.
  * Similar to buildDeployConfig but does NOT include agentBps in the BPS validation
  * (the contract handles appending the agent delegate and validating total == 10000).
@@ -415,11 +512,11 @@ function buildDeployConfigForAgent(
   deployer: `0x${string}`,
 ) {
   // Token validation
-  if (!params.token.name?.trim() || params.token.name.length > 100) {
-    throw new Error('Token name is required and must be <= 100 characters');
+  if (!params.token.name?.trim() || params.token.name.length > 50) {
+    throw new Error('Token name is required and must be <= 50 characters');
   }
-  if (!params.token.symbol?.trim() || params.token.symbol.length > 20) {
-    throw new Error('Token symbol is required and must be <= 20 characters');
+  if (!params.token.symbol?.trim() || params.token.symbol.length > 50) {
+    throw new Error('Token symbol is required and must be <= 50 characters');
   }
 
   const delegates = [
@@ -575,24 +672,29 @@ export async function getAgentInfo(
  * Pass the resulting signature to setAgentWallet().
  *
  * EIP-712 domain:
- *   name:              "ERC8004IdentityRegistry"  (from contract name() bytecode)
+ *   name:              "ERC8004IdentityRegistry"
  *   version:           "1"
  *   chainId:           target chain
  *   verifyingContract: IdentityRegistry address
  *
- * ⚠️ WARNING: The exact `SetAgentWallet` type struct has not been verified against the deployed
- * contract via a live transaction. If setAgentWallet() reverts with "invalid signature",
- * check the ERC-8004 reference implementation for the exact typehash string.
- * The most likely struct is: SetAgentWallet(uint256 agentId, address newWallet, uint256 deadline)
+ * EIP-712 struct (verified against ERC-8004 IdentityRegistryUpgradeable source):
+ *   AgentWalletSet(uint256 agentId, address newWallet, address owner, uint256 deadline)
+ *
+ * Note: `owner` is the current ownerOf(agentId) at signing time. The contract
+ * derives owner from on-chain state and includes it in the struct hash. This
+ * binds the signature to the current owner — if NFT is transferred, old
+ * signatures become invalid (owner changes → different struct hash).
  *
  * Usage:
- *   const typedData = buildSetAgentWalletTypedData(agentId, newWallet, deadline, chainId);
+ *   const typedData = buildSetAgentWalletTypedData(agentId, newWallet, ownerAddress, deadline, chainId);
  *   const signature = await newWalletClient.signTypedData(typedData);
  *   await setAgentWallet(agentId, newWallet, deadline, signature, publicClient, ownerWalletClient, chainId);
  */
 export function buildSetAgentWalletTypedData(
   agentId: bigint,
   newWallet: `0x${string}`,
+  /** Current ownerOf(agentId) — included in EIP-712 struct hash for ownership binding */
+  owner: `0x${string}`,
   deadline: bigint,
   chainId: SupportedChainId = 56,
 ) {
@@ -606,16 +708,18 @@ export function buildSetAgentWalletTypedData(
       verifyingContract: registry,
     },
     types: {
-      SetAgentWallet: [
+      AgentWalletSet: [
         { name: 'agentId',   type: 'uint256' },
         { name: 'newWallet', type: 'address' },
+        { name: 'owner',     type: 'address' },
         { name: 'deadline',  type: 'uint256' },
       ],
     },
-    primaryType: 'SetAgentWallet' as const,
+    primaryType: 'AgentWalletSet' as const,
     message: {
       agentId,
       newWallet,
+      owner,
       deadline,
     },
   };
@@ -668,4 +772,163 @@ export async function setAgentWallet(
   } catch (e) {
     return { error: parseError(e) };
   }
+}
+
+// ============ API Registration ============
+
+/** Parameters for registering an agentbound token with the Octopurr API */
+export type RegisterAgentWithTokenParams = {
+  agent: {
+    agentId: string;
+    chainId: number;
+    tokenAddress: string;
+    identityHash: string;
+    deployTx: string;
+    ownerWallet: string;
+    agentName: string;
+    agentDescription?: string;
+    agentImage?: string;
+    /** data:application/json;base64,... URI (from constructAgentDataUri) */
+    agentUri: string;
+  };
+  token: {
+    address: string;
+    name: string;
+    symbol: string;
+    creatorWallet: string;
+    deployTx: string;
+    chainId?: number;
+    marketCapBnb?: number;
+    description?: string;
+    imageUrl?: string;
+    metadata?: {
+      website?: string;
+      github?: string;
+      twitter?: string;
+      moltbook?: string;
+      telegram?: string;
+      discord?: string;
+    };
+    feeRecipients?: Array<{ address: string; bps: number }>;
+    identityRecipients?: Array<{
+      identityHash: string;
+      bps: number;
+      platform?: string;
+      identifier?: string;
+      accountId?: string | null;
+      username?: string | null;
+    }>;
+    /** ERC-8004 agent ID bound to this token */
+    boundAgentId?: number;
+  };
+};
+
+/** Result from agent + token registration */
+export type RegisterAgentWithTokenResult = {
+  agent: { status: string; agentId: string };
+  token: { status: string; address: string };
+};
+
+/**
+ * Register an agentbound token deployment with the Octopurr API.
+ *
+ * Calls POST /api/v1/agents/register-with-token which atomically:
+ * 1. Verifies the deploy TX on-chain (AgentboundTokenDeployed event)
+ * 2. Inserts agent registration in DB
+ * 3. Inserts token_pending (triggers confirmation worker)
+ *
+ * Must be called AFTER deployAgentboundToken() succeeds.
+ * Both agent and token are registered in a single API call.
+ *
+ * @param apiUrl - Octopurr API base URL (e.g. 'https://octopurr.com')
+ * @param params - Agent metadata + token registration data
+ *
+ * @example
+ * ```ts
+ * const deployResult = await deployAgentboundToken(params, pub, wallet, 56);
+ * if (deployResult.error) throw deployResult.error;
+ *
+ * const agentUri = constructAgentDataUri({ name: 'MyAgent', description: '...' });
+ *
+ * await registerAgentWithToken('https://octopurr.com', {
+ *   agent: {
+ *     agentId: deployResult.agentId.toString(),
+ *     chainId: 56,
+ *     tokenAddress: deployResult.tokenAddress,
+ *     identityHash: deployResult.identityHash,
+ *     deployTx: deployResult.txHash,
+ *     ownerWallet: account.address,
+ *     agentName: 'MyAgent',
+ *     agentDescription: 'An autonomous agent',
+ *     agentUri,
+ *   },
+ *   token: {
+ *     address: deployResult.tokenAddress,
+ *     name: 'AgentCoin',
+ *     symbol: 'ACOIN',
+ *     creatorWallet: account.address,
+ *     deployTx: deployResult.txHash,
+ *     chainId: 56,
+ *     boundAgentId: Number(deployResult.agentId),
+ *   },
+ * });
+ * ```
+ */
+export async function registerAgentWithToken(
+  apiUrl: string,
+  params: RegisterAgentWithTokenParams,
+): Promise<Result<RegisterAgentWithTokenResult>> {
+  // Validate required fields
+  if (!params.agent.agentId) {
+    return { error: parseError(new Error('agentId is required')) };
+  }
+  if (!params.agent.deployTx?.startsWith('0x')) {
+    return { error: parseError(new Error('Invalid or missing deployTx')) };
+  }
+  if (!params.agent.agentUri?.startsWith('data:application/json;base64,')) {
+    return { error: parseError(new Error('agentUri must be a data:application/json;base64, URI')) };
+  }
+  if (!params.token.address || !isAddress(params.token.address)) {
+    return { error: parseError(new Error('Invalid or missing token address')) };
+  }
+  if (!params.token.name?.trim()) {
+    return { error: parseError(new Error('Token name is required')) };
+  }
+
+  const body = JSON.stringify({
+    agent: params.agent,
+    token: {
+      ...params.token,
+      deployMethod: 'sdk',
+    },
+  });
+
+  // Retry once on transient failure (5xx/timeout).
+  // Token is already on-chain — registration is metadata-only.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/agents/register-with-token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(15_000),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        if (res.status < 500) {
+          return { error: parseError(new Error((err as any).error || `HTTP ${res.status}`)) };
+        }
+        if (attempt === 0) continue;
+        return { error: parseError(new Error((err as any).error || `HTTP ${res.status}`)) };
+      }
+
+      return await res.json() as RegisterAgentWithTokenResult;
+    } catch (e) {
+      if (attempt === 0) continue;
+      return { error: parseError(e) };
+    }
+  }
+
+  return { error: parseError(new Error('registerAgentWithToken failed after retry')) };
 }

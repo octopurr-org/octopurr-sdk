@@ -1,7 +1,7 @@
 /**
  * Protocol contract addresses.
  * Updated via sync-addresses.js after each deploy.
- * Protocol contract addresses per chain.
+ * Source of truth: github.com/octopurr-org/octopurr-addresses
  *
  * IMPORTANT: Each chain entry MUST include wbnb + pancake nested fields
  * in addition to octopurr protocol addresses — required by loadChainConfig().

@@ -98,11 +98,11 @@ export function buildDeployConfig(
   deployer: `0x${string}`,
 ): DeploymentConfigStruct {
   // Validate token name & symbol
-  if (!params.token.name?.trim() || params.token.name.length > 100) {
-    throw new Error('Token name is required and must be <= 100 characters');
+  if (!params.token.name?.trim() || params.token.name.length > 50) {
+    throw new Error('Token name is required and must be <= 50 characters');
   }
-  if (!params.token.symbol?.trim() || params.token.symbol.length > 20) {
-    throw new Error('Token symbol is required and must be <= 20 characters');
+  if (!params.token.symbol?.trim() || params.token.symbol.length > 50) {
+    throw new Error('Token symbol is required and must be <= 50 characters');
   }
 
   const identityEntries: Array<{ identityHash: `0x${string}`; bps: number }> = [
@@ -129,7 +129,7 @@ export function buildDeployConfig(
   const startingTick = marketCapToTick(params.marketCapBNB);
   const { tickLower, tickUpper } = params.tickRange ?? getDefaultTickRange(startingTick);
 
-  // Validate tick parameters (prevent obscure PancakeSwap reverts)
+  // Validate tick parameters (M-01: prevent obscure PancakeSwap reverts)
   const tickSpacing = POOL_CONFIG.tickSpacing;
   if (tickLower >= tickUpper) {
     throw new Error(`Invalid tick range: tickLower (${tickLower}) must be < tickUpper (${tickUpper})`);
@@ -373,7 +373,7 @@ export async function registerToken(
     preset: data.preset ?? 'standard',
   });
 
-  // Retry once on transient failure (network timeout, 5xx).
+  // M-01: Retry once on transient failure (network timeout, 5xx).
   // Token is already on-chain at this point — registration is metadata-only.
   for (let attempt = 0; attempt < 2; attempt++) {
     try {

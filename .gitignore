@@ -1,6 +1,4 @@
-dist/
 node_modules/
+dist/
+*.tgz
 .env
-*.env
-test-*.mjs
-src/abi/TokenFactory.json

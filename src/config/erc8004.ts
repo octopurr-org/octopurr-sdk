@@ -3,7 +3,7 @@
  *
  * These are protocol-level addresses for the ERC-8004 standard (external),
  * NOT Octopurr-owned contracts. Stored here as standalone constants,
- * separate from Octopurr protocol addresses.
+ * separate from OctopurrAddresses (octopurr-addresses repo scope).
  *
  * Deployed by the ERC-8004 authors:
  *   Mainnet:  0x8004A169FB4a3325136EB29fA0ceB6D2e539a432

@@ -1,5 +1,5 @@
 /**
- * Octopurr SDK — PancakeSwap V3 Token Launchpad (BSC)
+ * Octopurr SDK — Token & Agent Launchpad on BNB Chain
  */
 
 // Deploy
@@ -94,11 +94,14 @@ export {
   getIdentityRegistryAddress,
   buildSetAgentWalletTypedData,
   setAgentWallet,
+  registerAgentWithToken,
   type DeployAgentWithTokenParams,
   type AgentMetadata,
   type AgentDeployResult,
   type AgentInfo,
   type AgentContextResult,
+  type RegisterAgentWithTokenParams,
+  type RegisterAgentWithTokenResult,
 } from './agent-deployer.js';
 
 // Extensions

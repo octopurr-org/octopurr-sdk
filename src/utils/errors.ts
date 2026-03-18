@@ -91,6 +91,38 @@ const ERROR_LABELS: Record<string, string> = {
   AgentWalletNotSet: 'Agent wallet not set — owner must call setAgentWallet() first',
   Erc8004RegistryCallFailed: 'ERC-8004 registry call failed',
 
+  // AgentDeployer
+  DuplicateExtension: 'Extension already present in config',
+  DuplicateIdentityHash: 'Duplicate identity hash in recipients',
+  ExcessValue: 'Excess BNB sent (msg.value > required)',
+
+  // VestingVault
+  InvalidVaultConfig: 'Invalid vault config (agent mode requires admin=address(0), direct mode requires admin)',
+  WrongClaimMode: 'Wrong claim mode (use claim() for direct, claimByIdentity() for agent)',
+  ResolvedWalletInvalid: 'Identity resolver returned zero address',
+  IdentityResolverNotSet: 'Identity resolver not configured on VestingVault',
+  InvalidMsgValue: 'Extension does not accept BNB',
+  NotAdmin: 'Caller is not the admin',
+  NoPendingAdmin: 'No pending admin proposal',
+  NotPendingAdmin: 'Caller is not the pending admin',
+  PendingAdminExists: 'A pending admin proposal already exists',
+  AdminProposalExpired: 'Admin proposal has expired',
+
+  // Ownership (2-step)
+  NoPendingOwnerProposal: 'No pending owner proposal',
+  NotPendingOwner: 'Caller is not the pending owner',
+  PendingOwnerProposalExists: 'A pending owner proposal already exists',
+
+  // LPLocker / VestingVault governance
+  SameIrAdmin: 'New IR admin is the same as current',
+  NotIrAdmin: 'Caller is not the IR admin',
+  NotPendingIrAdmin: 'Caller is not the pending IR admin',
+  PendingIrAdminExists: 'A pending IR admin transfer already exists',
+  NoPendingIrAdmin: 'No pending IR admin transfer',
+  IdentityResolverChangeNotReady: 'Identity resolver change timelock not elapsed',
+  NoPendingIdentityResolver: 'No pending identity resolver change',
+  PendingIdentityResolverExists: 'A pending identity resolver change already exists',
+
   // General
   OwnableUnauthorizedAccount: 'Not authorized (not owner)',
   NotOwner: 'Not authorized (not owner)',
