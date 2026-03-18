@@ -1,6 +1,6 @@
 {
   "name": "@octopurr/sdk",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Octopurr SDK — TypeScript SDK for PancakeSwap V3 Token Launchpad on BSC",
   "type": "module",
   "main": "./dist/index.js",

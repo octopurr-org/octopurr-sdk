@@ -1,14 +1,22 @@
 # @octopurr/sdk
 
-TypeScript SDK for [Octopurr](https://octopurr.com) — Token Launchpad with Fee Accumulation on BNB Chain.
+TypeScript SDK for [Octopurr](https://octopurr.com) — Token & Agent Launchpad on BNB Chain.
 
-Deploy tokens, deploy agentbound tokens (ERC-8004), trade, and claim fees — all on-chain via PancakeSwap V3.
+Deploy tokens, deploy agentbound tokens (ERC-8004), trade, and claim fees — all on-chain via PancakeSwap.
 
 ## Install
 
 ```bash
 npm install @octopurr/sdk viem
 ```
+
+## AI Agents
+
+**Read the skill file for complete implementation guide:**
+
+📄 **[octopurr.com/skill.md](https://octopurr.com/skill.md)**
+
+The skill file contains all parameters, required steps (deploy → register → set wallet), code examples, and claim flows. Use it as the primary reference.
 
 ## Quick Start
 
@@ -22,54 +30,11 @@ const account = privateKeyToAccount('0x...');
 const publicClient = createPublicClient({ chain: bsc, transport: http() });
 const walletClient = createWalletClient({ chain: bsc, transport: http(), account });
 
-// Deploy a token
+// Deploy a token (Step 1 of 2 — must also register with API)
 const result = await core.deployToken({
   token: { name: 'MyToken', symbol: 'MTK' },
   marketCapBNB: 30,
   recipients: [{ address: account.address, bps: 10_000 }],
-  chainId: 56,
-}, publicClient, walletClient);
-
-if (result.error) {
-  console.error(result.error.label);
-} else {
-  console.log('Token:', result.tokenAddress);
-}
-```
-
-## Deploy Agentbound Token
-
-```typescript
-import { deployAgentboundToken } from '@octopurr/sdk';
-
-const result = await deployAgentboundToken({
-  agent: { name: 'My Agent', description: 'An autonomous agent' },
-  token: {
-    token: { name: 'AgentCoin', symbol: 'ACOIN' },
-    marketCapBNB: 30,
-    recipients: [],
-  },
-  agentBps: 10_000,
-  nftRecipient: account.address,
-}, publicClient, walletClient, 56);
-```
-
-## Buy & Sell
-
-```typescript
-import { parseEther } from 'viem';
-
-// Buy
-await core.buyToken({
-  token: '0x...' as `0x${string}`,
-  amountIn: parseEther('0.1'),
-  chainId: 56,
-}, publicClient, walletClient);
-
-// Sell (Permit2 handled automatically)
-await core.sellToken({
-  token: '0x...' as `0x${string}`,
-  amountIn: parseUnits('10000', 18),
   chainId: 56,
 }, publicClient, walletClient);
 ```
@@ -78,19 +43,23 @@ await core.sellToken({
 
 | Function | Description |
 |----------|-------------|
-| `core.deployToken(params, pub, wallet)` | Deploy BEP-20 + PancakeSwap V3 pool |
+| `core.deployToken(params, pub, wallet)` | Deploy BEP-20 + PancakeSwap pool |
+| `core.registerToken(apiUrl, data)` | Register deployed token with API **(required)** |
 | `deployAgentboundToken(params, pub, wallet, chainId)` | Atomic agent + token deploy (ERC-8004) |
+| `registerAgentWithToken(apiUrl, params)` | Register agent + token with API **(required)** |
+| `buildSetAgentWalletTypedData(agentId, wallet, owner, deadline, chainId)` | Build EIP-712 typed data for setAgentWallet |
+| `setAgentWallet(agentId, wallet, deadline, sig, pub, wallet, chainId)` | Set agent wallet **(required for fees)** |
 | `core.buyToken(params, pub, wallet)` | Buy tokens with BNB |
 | `core.sellToken(params, pub, wallet)` | Sell tokens for BNB (auto Permit2) |
-| `core.claimFees(tokenId, pub, wallet)` | Collect LP fees (permissionless) |
-| `claimAgentFees(agentId, tokenId, pub, wallet)` | Claim agent fee share |
-| `claimSocialFees(platform, id, tokenId, pub, wallet)` | Claim social identity fee share |
-| `computeSocialIdentityHash(platform, id)` | Compute social identity hash |
-| `computeErc8004IdentityHash(agentId)` | Compute agent identity hash |
-| `core.buildCreatorBuyExtension(bnb, params, chainId)` | Build CreatorBuy extension config |
-| `core.buildVestingVaultExtension(bps, params, chainId)` | Build VestingVault extension config |
-| `getAgentInfo(agentId, pub, chainId)` | Query agent metadata on-chain |
+| `core.claimFees(tokenId, pub, wallet)` | Collect LP fees |
+| `claimAgentFees(agentId, tokenId, pub, wallet)` | Claim agent fee share → agentWallet |
+| `core.buildCreatorBuyExtension(bnb, params, chainId)` | Build CreatorBuy extension |
+| `core.buildVestingVaultExtension(bps, params, chainId)` | Build VestingVault extension |
+| `core.buildAirdropExtension(bps, params, chainId)` | Build Airdrop extension |
+| `getAgentInfo(agentId, pub, chainId)` | Query agent on-chain |
 | `getAgentFeeState(agentId, tokenId, pub, chainId)` | Query agent fee state |
+| `core.getPoolPrice(token, pub, chainId)` | Get pool price |
+| `core.getMarketCapBNB(token, pub, chainId)` | Get market cap in BNB |
 | `config.getChainConfig(chainId)` | Chain addresses and constants |
 
 ## Chains
@@ -100,11 +69,11 @@ await core.sellToken({
 | BNB Chain Mainnet | 56 |
 | BNB Chain Testnet | 97 |
 
-## Documentation
+## Links
 
-- **Full SDK docs:** [docs.octopurr.com](https://docs.octopurr.com)
-- **Agent skill file:** [octopurr.com/skill.md](https://octopurr.com/skill.md)
-- **Website:** [octopurr.com](https://octopurr.com)
+- 📄 **[Skill File](https://octopurr.com/skill.md)** — complete guide for AI agents
+- 📚 [Docs](https://github.com/octopurr-org/octopurr-docs)
+- 🌐 [Website](https://octopurr.com)
 
 ## License
 
